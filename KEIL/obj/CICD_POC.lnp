@@ -1,0 +1,18 @@
+--cpu=Cortex-M4.fp.sp
+".\obj\system_m480.o"
+".\obj\startup_m480.o"
+".\obj\cicd_poc.o"
+".\obj\retarget.o"
+".\obj\sys.o"
+".\obj\uart.o"
+".\obj\clk.o"
+".\obj\gpio.o"
+".\obj\timer.o"
+".\obj\spi.o"
+".\obj\i2c.o"
+".\obj\fmc.o"
+".\obj\eadc.o"
+".\obj\wdt.o"
+--library_type=microlib --ro-base 0x00003000 --entry 0x00003000 --rw-base 0x20000000 --entry Reset_Handler --first __Vectors --strict --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\lst\CICD_POC.map" -o .\obj\CICD_POC.axf
