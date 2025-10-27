@@ -8,15 +8,37 @@ pipeline {
     }
 
     triggers {
-        githubPush() // automatically trigger from GitHub webhook
+        // Trigger when code is pushed OR PR is merged
+        githubPush()
+        GenericTrigger(
+            genericVariables: [
+                [key: 'action', value: '$.action'],
+                [key: 'merged', value: '$.pull_request.merged'],
+                [key: 'base_branch', value: '$.pull_request.base.ref'],
+                [key: 'head_branch', value: '$.pull_request.head.ref']
+            ],
+            causeString: 'Triggered by Pull Request $action from $head_branch to $base_branch',
+            token: 'github-pr-token',
+            printContributedVariables: true,
+            printPostContent: true,
+            regexpFilterExpression: '^(closed)$',
+            regexpFilterText: '$action'
+        )
     }
 
     stages {
 
         stage('Checkout') {
+            when {
+                expression {
+                    // Run for both normal pushes and merged PRs into master
+                    return (env.action == null || 
+                           (env.action == 'closed' && env.merged == 'true' && env.base_branch == 'master'))
+                }
+            }
             steps {
                 echo "Checking out source from GitHub..."
-                git branch: 'release/1.12',
+                git branch: 'release/1.13',
                     url: 'https://github.com/Surya-Jayachandran/mobitech1-cicd_poc.git'
             }
         }
@@ -24,11 +46,9 @@ pipeline {
         stage('Build Firmware') {
             steps {
                 echo "Building firmware..."
-                // Replace this with your actual build command if applicable
-                // Example for Keil:
+                // If you have a real build command, place it here
+                // Example (Keil):
                 // bat '"C:\\Keil_v5\\UV4\\UV4.exe" -b KEIL\\cicd_poc.uvprojx -j0 -o KEIL\\output\\build.log'
-                // Example for GCC:
-                // sh 'make clean all'
             }
         }
 
@@ -92,11 +112,11 @@ ${jobName} Build Success<br>
 Version: ${version}<br>
 Build: ${buildNum}<br>
 Triggered By: ${triggeredBy}<br><br>
-Release Notes:<br>
+RELEASE.md:<br>
 ${releaseContent.replaceAll('\n', '<br>')}<br><br>
 Files:<br>
 <a href='${binUrl}'>${binFile}</a><br>
-<a href='${hexUrl}'>${hexFile}</a>
+<a href='${hexUrl}'>${hexFile}</a><br>
 """
 
                     // Save Build Info for reference
