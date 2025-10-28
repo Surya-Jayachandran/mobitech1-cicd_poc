@@ -8,7 +8,7 @@ pipeline {
     }
 
     triggers {
-        // Trigger only when a pull request is merged into master
+        // Trigger only on pull request merged into master
         GenericTrigger(
             genericVariables: [
                 [key: 'action', value: '$.action'],
@@ -20,6 +20,7 @@ pipeline {
             token: 'github-pr-token',
             printContributedVariables: true,
             printPostContent: true,
+            // Run only when action = closed (i.e., PR merged or closed)
             regexpFilterExpression: '^(closed)$',
             regexpFilterText: '$action'
         )
@@ -30,10 +31,13 @@ pipeline {
         stage('Checkout') {
             when {
                 expression {
-                    // Run only if PR is merged into master
-                    return (env.action == 'closed' &&
-                            env.merged == 'true' &&
-                            env.base_branch == 'master')
+                    // Run only if PR is merged into master (not just closed)
+                    return (
+                        env.action == 'closed' &&
+                        env.merged == 'true' &&
+                        env.base_branch == 'master' &&
+                        env.head_branch != null
+                    )
                 }
             }
             steps {
@@ -44,15 +48,16 @@ pipeline {
         }
 
         stage('Build Firmware') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch == 'master' && env.merged == 'true' } }
             steps {
                 echo "Building firmware..."
-                // Add actual build command here if available
+                // Add real build command here, for example:
+                // sh 'make clean all'
             }
         }
 
         stage('Prepare Release Files') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch == 'master' && env.merged == 'true' } }
             steps {
                 script {
                     sh 'rm -rf release || true'
@@ -63,7 +68,7 @@ pipeline {
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    // Detect and copy firmware files
+                    // Auto-detect build output (if available)
                     def binSrc = sh(script: "find . -type f -name '*.bin' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
                     def hexSrc = sh(script: "find . -type f -name '*.hex' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
 
@@ -79,31 +84,34 @@ pipeline {
                         sh "echo 'Hex placeholder' > release/${hexFile}"
                     }
 
-                    echo "Firmware prepared: ${binFile}, ${hexFile}"
+                    echo "Firmware prepared successfully: ${binFile}, ${hexFile}"
                 }
             }
         }
 
         stage('Notify Teams') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch == 'master' && env.merged == 'true' } }
             steps {
                 script {
                     def buildNum = env.BUILD_NUMBER
                     def version = VERSION_PREFIX
                     def jobName = env.JOB_NAME
                     def triggeredBy = currentBuild.getBuildCauses()[0]?.userName ?: "Automated Trigger"
+                    def sourceBranch = env.head_branch ?: "unknown"
+                    def targetBranch = env.base_branch ?: "unknown"
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    def releaseContent = fileExists('RELEASE.md') ?
-                        readFile('RELEASE.md').trim() :
-                        "No release notes found in RELEASE.md"
+                    def releaseContent = fileExists('RELEASE.md')
+                        ? readFile('RELEASE.md').trim()
+                        : "No release notes found in RELEASE.md"
 
                     def buildUrl = env.BUILD_URL + "artifact/release/"
 
                     def message = """\
 ${jobName} Build Success<br>
 ──────────────────────────────<br>
+Merged Branch: ${sourceBranch} → ${targetBranch}<br>
 Version: ${version}<br>
 Build: ${buildNum}<br>
 Triggered By: ${triggeredBy}<br><br>
@@ -125,7 +133,7 @@ Files:<br>
         }
 
         stage('Archive Artifacts') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch == 'master' && env.merged == 'true' } }
             steps {
                 echo "Archiving firmware artifacts..."
                 archiveArtifacts artifacts: 'release/*.bin, release/*.hex, release/BuildInfo.txt',
