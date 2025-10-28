@@ -8,7 +8,7 @@ pipeline {
     }
 
     triggers {
-        // Trigger only when a pull request is merged into master
+        // Trigger only when a PR is merged into master or main
         GenericTrigger(
             genericVariables: [
                 [key: 'action', value: '$.action'],
@@ -16,7 +16,7 @@ pipeline {
                 [key: 'base_branch', value: '$.pull_request.base.ref'],
                 [key: 'head_branch', value: '$.pull_request.head.ref']
             ],
-            causeString: 'Triggered by Pull Request $action from $head_branch to $base_branch',
+            causeString: 'Triggered by PR ${action} (merged=${merged}) from ${head_branch} → ${base_branch}',
             token: 'github-pr-token',
             printContributedVariables: true,
             printPostContent: true,
@@ -30,31 +30,32 @@ pipeline {
         stage('Checkout') {
             when {
                 expression {
-                    // Run only when PR is merged into master
-                    return (env.action == 'closed' &&
-                            env.merged == 'true' &&
-                            env.base_branch == 'master')
+                    // Run only if PR is merged into master or main
+                    return (
+                        env.action == 'closed' &&
+                        env.merged == 'true' &&
+                        (env.base_branch == 'master' || env.base_branch == 'main')
+                    )
                 }
             }
             steps {
-                echo "Pull Request merged into master — checking out code..."
-                git branch: 'master',
+                echo "Pull Request merged into ${env.base_branch} — checking out latest code..."
+                git branch: env.base_branch,
                     url: 'https://github.com/Surya-Jayachandran/mobitech1-cicd_poc.git'
             }
         }
 
         stage('Build Firmware') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch in ['master', 'main'] && env.merged == 'true' } }
             steps {
                 echo "Building firmware..."
-                // Add your actual build command here
-                // Example:
+                // Add real build command here, for example:
                 // sh 'make clean all'
             }
         }
 
         stage('Prepare Release Files') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch in ['master', 'main'] && env.merged == 'true' } }
             steps {
                 script {
                     sh 'rm -rf release || true'
@@ -65,23 +66,19 @@ pipeline {
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    // Try to find real firmware outputs automatically
-                    def binSrc = sh(script: "find . -type f -name '*.bin' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
-                    def hexSrc = sh(script: "find . -type f -name '*.hex' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
+                    // Try to find existing .bin and .hex files
+                    def binSrc = sh(script: "find . -type f -name '*.bin' | head -n 1 || true", returnStdout: true).trim()
+                    def hexSrc = sh(script: "find . -type f -name '*.hex' | head -n 1 || true", returnStdout: true).trim()
 
                     if (binSrc) {
-                        echo "Found binary file: ${binSrc}"
                         sh "cp '${binSrc}' release/${binFile}"
                     } else {
-                        echo "No .bin file found, creating placeholder"
                         sh "echo 'Binary placeholder' > release/${binFile}"
                     }
 
                     if (hexSrc) {
-                        echo "Found hex file: ${hexSrc}"
                         sh "cp '${hexSrc}' release/${hexFile}"
                     } else {
-                        echo "No .hex file found, creating placeholder"
                         sh "echo 'Hex placeholder' > release/${hexFile}"
                     }
 
@@ -91,37 +88,34 @@ pipeline {
         }
 
         stage('Notify Teams') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch in ['master', 'main'] && env.merged == 'true' } }
             steps {
                 script {
                     def buildNum = env.BUILD_NUMBER
                     def version = VERSION_PREFIX
                     def jobName = env.JOB_NAME
-                    def triggeredBy = currentBuild.getBuildCauses()[0]?.userName ?: "Automated Trigger"
+                    def fromBranch = env.head_branch ?: "unknown"
+                    def toBranch = env.base_branch ?: "unknown"
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
+                    def buildUrl = env.BUILD_URL + "artifact/release/"
 
                     def releaseContent = fileExists('RELEASE.md')
                         ? readFile('RELEASE.md').trim()
                         : "No release notes found in RELEASE.md"
 
-                    def buildUrl = env.BUILD_URL + "artifact/release/"
-
                     def message = """\
 ${jobName} Build Success<br>
 ──────────────────────────────<br>
+Merged: ${fromBranch} → ${toBranch}<br>
 Version: ${version}<br>
-Build: ${buildNum}<br>
-Triggered By: ${triggeredBy}<br><br>
+Build: ${buildNum}<br><br>
 RELEASE.md:<br>
 ${releaseContent.replaceAll('\n', '<br>')}<br><br>
 Files:<br>
 <a href='${buildUrl}${binFile}'>${binFile}</a><br>
 <a href='${buildUrl}${hexFile}'>${hexFile}</a>
 """
-
-                    // Save build info
-                    writeFile file: 'release/BuildInfo.txt', text: message.replaceAll('<br>', '\n')
 
                     echo "Sending Teams notification..."
                     sh """
@@ -134,10 +128,10 @@ Files:<br>
         }
 
         stage('Archive Artifacts') {
-            when { expression { env.base_branch == 'master' } }
+            when { expression { env.base_branch in ['master', 'main'] && env.merged == 'true' } }
             steps {
-                echo "Archiving release files..."
-                archiveArtifacts artifacts: 'release/*.bin, release/*.hex, release/BuildInfo.txt',
+                echo "Archiving build artifacts..."
+                archiveArtifacts artifacts: 'release/*.bin, release/*.hex',
                                   onlyIfSuccessful: true,
                                   fingerprint: true
             }
@@ -146,7 +140,7 @@ Files:<br>
 
     post {
         success {
-            echo "Build completed successfully for merged PR into master."
+            echo "Build completed successfully for PR merged into ${env.base_branch}."
         }
 
         failure {
@@ -156,7 +150,6 @@ ${env.JOB_NAME} Build Failed<br>
 ──────────────────────────────<br>
 Version: ${VERSION_PREFIX}<br>
 Build: ${env.BUILD_NUMBER}<br>
-Triggered By: ${currentBuild.getBuildCauses()[0]?.userName ?: "Automated Trigger"}<br>
 """
                 echo "Sending failure message to Teams..."
                 sh """
