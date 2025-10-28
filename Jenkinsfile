@@ -30,14 +30,14 @@ pipeline {
         stage('Checkout') {
             when {
                 expression {
-                    // Run only when PR is merged into master
+                    // Run only if PR is merged into master
                     return (env.action == 'closed' &&
                             env.merged == 'true' &&
                             env.base_branch == 'master')
                 }
             }
             steps {
-                echo "Pull Request merged into master — checking out code..."
+                echo "Pull Request merged into master — checking out latest code..."
                 git branch: 'master',
                     url: 'https://github.com/Surya-Jayachandran/mobitech1-cicd_poc.git'
             }
@@ -47,9 +47,7 @@ pipeline {
             when { expression { env.base_branch == 'master' } }
             steps {
                 echo "Building firmware..."
-                // Add your actual build command here
-                // Example:
-                // sh 'make clean all'
+                // Add actual build command here if available
             }
         }
 
@@ -65,23 +63,19 @@ pipeline {
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    // Try to find real firmware outputs automatically
+                    // Detect and copy firmware files
                     def binSrc = sh(script: "find . -type f -name '*.bin' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
                     def hexSrc = sh(script: "find . -type f -name '*.hex' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
 
                     if (binSrc) {
-                        echo "Found binary file: ${binSrc}"
                         sh "cp '${binSrc}' release/${binFile}"
                     } else {
-                        echo "No .bin file found, creating placeholder"
                         sh "echo 'Binary placeholder' > release/${binFile}"
                     }
 
                     if (hexSrc) {
-                        echo "Found hex file: ${hexSrc}"
                         sh "cp '${hexSrc}' release/${hexFile}"
                     } else {
-                        echo "No .hex file found, creating placeholder"
                         sh "echo 'Hex placeholder' > release/${hexFile}"
                     }
 
@@ -101,9 +95,9 @@ pipeline {
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    def releaseContent = fileExists('RELEASE.md')
-                        ? readFile('RELEASE.md').trim()
-                        : "No release notes found in RELEASE.md"
+                    def releaseContent = fileExists('RELEASE.md') ?
+                        readFile('RELEASE.md').trim() :
+                        "No release notes found in RELEASE.md"
 
                     def buildUrl = env.BUILD_URL + "artifact/release/"
 
@@ -120,10 +114,7 @@ Files:<br>
 <a href='${buildUrl}${hexFile}'>${hexFile}</a>
 """
 
-                    // Save build info
-                    writeFile file: 'release/BuildInfo.txt', text: message.replaceAll('<br>', '\n')
-
-                    echo "Sending Teams notification..."
+                    echo "Sending notification to Microsoft Teams..."
                     sh """
                         curl -H 'Content-Type: application/json' \
                              -d '{"text": "${message.replaceAll('"', '\\"')}"}' \
@@ -136,7 +127,7 @@ Files:<br>
         stage('Archive Artifacts') {
             when { expression { env.base_branch == 'master' } }
             steps {
-                echo "Archiving release files..."
+                echo "Archiving firmware artifacts..."
                 archiveArtifacts artifacts: 'release/*.bin, release/*.hex, release/BuildInfo.txt',
                                   onlyIfSuccessful: true,
                                   fingerprint: true
@@ -146,7 +137,7 @@ Files:<br>
 
     post {
         success {
-            echo "Build completed successfully for merged PR into master."
+            echo "Build completed successfully for PR merged into master."
         }
 
         failure {
