@@ -8,8 +8,7 @@ pipeline {
     }
 
     triggers {
-        // Trigger when code is pushed OR PR is merged
-        githubPush()
+        // Trigger only when a pull request is merged into master
         GenericTrigger(
             genericVariables: [
                 [key: 'action', value: '$.action'],
@@ -31,28 +30,31 @@ pipeline {
         stage('Checkout') {
             when {
                 expression {
-                    // Run for both normal pushes and merged PRs into master
-                    return (env.action == null || 
-                           (env.action == 'closed' && env.merged == 'true' && env.base_branch == 'master'))
+                    // Run only when PR is merged into master
+                    return (env.action == 'closed' &&
+                            env.merged == 'true' &&
+                            env.base_branch == 'master')
                 }
             }
             steps {
-                echo "Checking out source from GitHub..."
-                git branch: 'release/1.13',
+                echo "Pull Request merged into master — checking out code..."
+                git branch: 'master',
                     url: 'https://github.com/Surya-Jayachandran/mobitech1-cicd_poc.git'
             }
         }
 
         stage('Build Firmware') {
+            when { expression { env.base_branch == 'master' } }
             steps {
                 echo "Building firmware..."
-                // If you have a real build command, place it here
-                // Example (Keil):
-                // bat '"C:\\Keil_v5\\UV4\\UV4.exe" -b KEIL\\cicd_poc.uvprojx -j0 -o KEIL\\output\\build.log'
+                // Add your actual build command here
+                // Example:
+                // sh 'make clean all'
             }
         }
 
         stage('Prepare Release Files') {
+            when { expression { env.base_branch == 'master' } }
             steps {
                 script {
                     sh 'rm -rf release || true'
@@ -68,18 +70,18 @@ pipeline {
                     def hexSrc = sh(script: "find . -type f -name '*.hex' | grep -E '(KEIL|IAR|GCC|build|output)' | head -n 1 || true", returnStdout: true).trim()
 
                     if (binSrc) {
-                        echo "Found binary: ${binSrc}"
+                        echo "Found binary file: ${binSrc}"
                         sh "cp '${binSrc}' release/${binFile}"
                     } else {
-                        echo "No .bin found — creating placeholder"
+                        echo "No .bin file found, creating placeholder"
                         sh "echo 'Binary placeholder' > release/${binFile}"
                     }
 
                     if (hexSrc) {
-                        echo "Found hex: ${hexSrc}"
+                        echo "Found hex file: ${hexSrc}"
                         sh "cp '${hexSrc}' release/${hexFile}"
                     } else {
-                        echo "No .hex found — creating placeholder"
+                        echo "No .hex file found, creating placeholder"
                         sh "echo 'Hex placeholder' > release/${hexFile}"
                     }
 
@@ -89,6 +91,7 @@ pipeline {
         }
 
         stage('Notify Teams') {
+            when { expression { env.base_branch == 'master' } }
             steps {
                 script {
                     def buildNum = env.BUILD_NUMBER
@@ -98,13 +101,11 @@ pipeline {
                     def binFile = "${PROJECT}_${version}_${buildNum}.bin"
                     def hexFile = "${PROJECT}_${version}_${buildNum}.hex"
 
-                    def releaseContent = fileExists('RELEASE.md') ?
-                        readFile('RELEASE.md').trim() :
-                        "No release notes found in RELEASE.md"
+                    def releaseContent = fileExists('RELEASE.md')
+                        ? readFile('RELEASE.md').trim()
+                        : "No release notes found in RELEASE.md"
 
                     def buildUrl = env.BUILD_URL + "artifact/release/"
-                    def binUrl = "${buildUrl}${binFile}"
-                    def hexUrl = "${buildUrl}${hexFile}"
 
                     def message = """\
 ${jobName} Build Success<br>
@@ -115,14 +116,14 @@ Triggered By: ${triggeredBy}<br><br>
 RELEASE.md:<br>
 ${releaseContent.replaceAll('\n', '<br>')}<br><br>
 Files:<br>
-<a href='${binUrl}'>${binFile}</a><br>
-<a href='${hexUrl}'>${hexFile}</a><br>
+<a href='${buildUrl}${binFile}'>${binFile}</a><br>
+<a href='${buildUrl}${hexFile}'>${hexFile}</a>
 """
 
-                    // Save Build Info for reference
+                    // Save build info
                     writeFile file: 'release/BuildInfo.txt', text: message.replaceAll('<br>', '\n')
 
-                    echo "Sending build success message to Microsoft Teams..."
+                    echo "Sending Teams notification..."
                     sh """
                         curl -H 'Content-Type: application/json' \
                              -d '{"text": "${message.replaceAll('"', '\\"')}"}' \
@@ -133,8 +134,9 @@ Files:<br>
         }
 
         stage('Archive Artifacts') {
+            when { expression { env.base_branch == 'master' } }
             steps {
-                echo "Archiving build outputs..."
+                echo "Archiving release files..."
                 archiveArtifacts artifacts: 'release/*.bin, release/*.hex, release/BuildInfo.txt',
                                   onlyIfSuccessful: true,
                                   fingerprint: true
@@ -144,7 +146,7 @@ Files:<br>
 
     post {
         success {
-            echo "Build completed successfully for ${env.JOB_NAME}"
+            echo "Build completed successfully for merged PR into master."
         }
 
         failure {
@@ -156,7 +158,7 @@ Version: ${VERSION_PREFIX}<br>
 Build: ${env.BUILD_NUMBER}<br>
 Triggered By: ${currentBuild.getBuildCauses()[0]?.userName ?: "Automated Trigger"}<br>
 """
-                echo "Sending failure message to Microsoft Teams..."
+                echo "Sending failure message to Teams..."
                 sh """
                     curl -H 'Content-Type: application/json' \
                          -d '{"text": "${failMsg.replaceAll('"', '\\"')}"}' \
